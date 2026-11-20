@@ -38,45 +38,24 @@ Run the tests (no Telegram needed):
 python tests/test_logic.py
 ```
 
-## Deploy: always-on options
+## Deploy: Render free Web Service + Neon free Postgres (all free, no card)
 
-### Railway (easiest, ~$5/mo hobby after trial)
-1. Push this folder to a private GitHub repo.
-2. Railway -> New Project -> Deploy from GitHub repo.
-3. Add variables `GLN_BOT_TOKEN` and `ADMIN_IDS` under Variables.
-4. Add a Railway Volume mounted at `/data` and set `GLN_DB_PATH=/data/gln_bot.db`
-   so the database survives redeploys.
-5. Set the start command to `python bot.py` (Railway detects Python automatically).
+Production shape: Render **free Web Service** runs the bot (background workers have
+no free tier, and free Render Postgres expires after 30 days, so we use Neon). The bot
+binds `$PORT` with a tiny health endpoint. Data lives in **Neon** free Postgres
+(permanent, no card, 1 GB, scales to zero between messages) via `DATABASE_URL`.
 
-### Render (free tier)
-1. Same GitHub repo. Render -> New -> Background Worker.
-2. Build command: `pip install -r requirements.txt`; Start command: `python bot.py`.
-3. Add the same environment variables. Attach a persistent disk and point
-   `GLN_DB_PATH` at it (free-tier disks are paid; without one the DB resets on redeploy).
-
-### Small VPS (Hetzner/Contabo ~$4/mo)
-```bash
-git clone <repo> && cd gln-bot
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-cp .env.example .env  # fill in values
-```
-Then a systemd unit `/etc/systemd/system/gln-bot.service`:
-
-```
-[Unit]
-Description=GLN Mining Bot
-After=network.target
-
-[Service]
-WorkingDirectory=/opt/gln-bot
-ExecStart=/opt/gln-bot/.venv/bin/python bot.py
-Restart=always
-EnvironmentFile=/opt/gln-bot/.env
-
-[Install]
-WantedBy=multi-user.target
-```
-`sudo systemctl enable --now gln-bot`
+1. Create a free Neon project (or claim the existing one via its claim link) and copy
+   the pooled connection string.
+2. Push this repo to any public Git host and create a Render Web Service from it
+   ("Public Git repository" works without connecting a Git provider), or use the
+   included `render.yaml` blueprint. Build: `pip install -r requirements.txt`,
+   start: `python bot.py`, plan: Free.
+3. Environment variables: `GLN_BOT_TOKEN`, `ADMIN_IDS`, `DATABASE_URL`.
+4. Free Web Services spin down after 15 idle minutes. Add a free external pinger
+   (e.g. cron-job.org every 10 minutes) hitting `https://<service>.onrender.com/`
+   so it stays awake; 750 free instance-hours/month cover 24/7. Telegram queues
+   messages for ~24h, so even a sleeping bot answers late, never loses data (Neon).
 
 ## Notes for TGE phase
 
