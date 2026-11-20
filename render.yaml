@@ -1,0 +1,22 @@
+# Render Blueprint: one free Web Service running the bot.
+# A Web Service (not a Background Worker) because workers have no free tier.
+# The bot binds $PORT with a tiny health endpoint; pair with a free external
+# pinger (e.g. cron-job.org every 10 min) so Render never spins it down.
+# Set these env vars in the Render dashboard after deploy:
+#   GLN_BOT_TOKEN - from @BotFather
+#   ADMIN_IDS     - 113438711
+#   DATABASE_URL  - from the Neon dashboard (Pooled connection string)
+services:
+  - type: web
+    name: gln-mining-bot
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    envVars:
+      - key: GLN_BOT_TOKEN
+        sync: false
+      - key: ADMIN_IDS
+        sync: false
+      - key: DATABASE_URL
+        sync: false
