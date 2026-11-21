@@ -37,11 +37,24 @@ def _start_health_server():
 
 
 async def main():
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    log = logging.getLogger(__name__)
+    # Bind Render's port FIRST so the port scanner sees us even if later steps fail.
+    _start_health_server()
     if not BOT_TOKEN:
         raise SystemExit("GLN_BOT_TOKEN is not set. Copy .env.example to .env and fill it in.")
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    init_db()
-    _start_health_server()
+    # Neon free tier scales to zero; the first connect can take many seconds while
+    # the database wakes. Retry instead of crash-looping (which also keeps the
+    # health server alive so Render does not kill the deploy as port-less).
+    for attempt in range(1, 7):
+        try:
+            init_db()
+            break
+        except Exception as exc:
+            log.warning("init_db attempt %s/6 failed: %s", attempt, exc)
+            if attempt == 6:
+                raise
+            await asyncio.sleep(5)
     bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
     dp.include_router(admin_router)
