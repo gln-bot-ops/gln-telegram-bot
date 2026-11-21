@@ -61,28 +61,48 @@ def _start_health_server():
                 length = int(self.headers.get("Content-Length") or 0)
                 payload = json.loads(self.rfile.read(length) or b"{}")
                 text = str(payload.get("text", "")).strip()
+                photo_url = str(payload.get("photo_url", "")).strip()
             except Exception:
-                text = ""
+                text, photo_url = "", ""
             if not text:
                 reply(400, {"ok": False, "error": "missing text"})
                 return
+
+            def tg_call(method, fields):
+                body = json.dumps(fields).encode()
+                req = urllib.request.Request(
+                    f"https://api.telegram.org/bot{BOT_TOKEN}/{method}",
+                    data=body, headers={"Content-Type": "application/json"})
+                with urllib.request.urlopen(req, timeout=20) as resp:
+                    return json.loads(resp.read())
+
+            # Classic deals-channel pattern: product photo on top, caption
+            # under it. sendPhoto captions are capped at 1024 chars; longer
+            # texts go out as the photo (bare) plus normal text chunks. Any
+            # photo failure falls back to plain text so no deal is lost.
+            ok, err, photo_sent = True, "", False
+            if photo_url:
+                fields = {"chat_id": chat_id, "photo": photo_url}
+                if len(text) <= 1024:
+                    fields["caption"] = text
+                try:
+                    photo_sent = bool(tg_call("sendPhoto", fields).get("ok"))
+                except Exception as exc:
+                    log.warning("deals photo post failed, falling back to text: %s", exc)
+            if photo_sent and len(text) <= 1024:
+                reply(200, {"ok": True, "error": "", "photo_sent": True})
+                return
             # Telegram caps messages at 4096 chars; send long texts in chunks.
-            ok, err = True, ""
             for i in range(0, len(text), 4000):
                 chunk = text[i:i + 4000]
-                body = json.dumps({"chat_id": chat_id, "text": chunk}).encode()
-                req = urllib.request.Request(
-                    f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-                    data=body, headers={"Content-Type": "application/json"})
                 try:
-                    with urllib.request.urlopen(req, timeout=20) as resp:
-                        result = json.loads(resp.read())
+                    result = tg_call("sendMessage", {"chat_id": chat_id, "text": chunk})
                     ok = ok and bool(result.get("ok"))
                 except Exception as exc:
                     ok, err = False, str(exc)
                     log.warning("deals post failed: %s", exc)
                     break
-            reply(200 if ok else 502, {"ok": ok, "error": err})
+            reply(200 if ok else 502, {"ok": ok, "error": err, "photo_sent": photo_sent})
 
         def log_message(self, *args):
             pass
