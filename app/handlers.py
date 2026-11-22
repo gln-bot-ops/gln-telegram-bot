@@ -39,10 +39,14 @@ DEALS_BTN = InlineKeyboardButton(
     text="🎁 عروض ولقط اليومية", url=config.DEALS_CHANNEL_URL
 )
 
-JOIN_KB = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text="🎁 انضم لقناة العروض", url=config.DEALS_CHANNEL_URL)],
-    [InlineKeyboardButton(text="انضميت ✅", callback_data="join:check")],
-])
+def _join_kb(ref_code=None) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎁 انضم لقناة العروض", url=config.DEALS_CHANNEL_URL)],
+        [InlineKeyboardButton(
+            text="انضميت ✅",
+            callback_data=("join:check:" + ref_code)[:64] if ref_code else "join:check",
+        )],
+    ])
 
 
 async def _is_deals_member(bot, user_id: int) -> bool:
@@ -62,6 +66,50 @@ async def _is_deals_member(bot, user_id: int) -> bool:
     if status == "restricted":
         return bool(getattr(member, "is_member", True))
     return status not in ("left", "kicked")
+
+
+# Short positive-membership cache so rapid button taps don't hammer Telegram.
+_member_ok: dict[int, float] = {}
+_MEMBER_OK_TTL = 300.0
+
+
+async def _member_cached(bot, user_id: int) -> bool:
+    now = time.monotonic()
+    if _member_ok.get(user_id, 0) > now:
+        return True
+    if await _is_deals_member(bot, user_id):
+        _member_ok[user_id] = now + _MEMBER_OK_TTL
+        return True
+    return False
+
+
+class ForceJoinMiddleware:
+    """Gate every user interaction on deals-channel membership. /start and
+    the re-check button pass through (they run their own gates). Ambiguous
+    errors fail open inside _is_deals_member."""
+
+    async def __call__(self, handler, event, data):
+        user = data.get("event_from_user")
+        if user is None:
+            return await handler(event, data)
+        if isinstance(event, CallbackQuery):
+            if event.data and event.data.startswith("join:check"):
+                return await handler(event, data)
+        elif isinstance(event, Message):
+            if event.text and event.text.startswith("/start"):
+                return await handler(event, data)
+        if await _member_cached(data["bot"], user.id):
+            return await handler(event, data)
+        if isinstance(event, CallbackQuery):
+            await event.answer(texts.JOIN_STILL_NOT_MEMBER, show_alert=True)
+            await event.message.answer(texts.JOIN_REQUIRED, reply_markup=_join_kb())
+        else:
+            await event.answer(texts.JOIN_REQUIRED, reply_markup=_join_kb())
+        return None
+
+
+router.message.middleware(ForceJoinMiddleware())
+router.callback_query.middleware(ForceJoinMiddleware())
 
 
 def _mine_kb(session, now: float):
@@ -118,14 +166,7 @@ async def on_start(message: Message, command: CommandObject):
     if command.args and command.args.startswith("ref_"):
         ref_code = command.args[4:]
     if not await _is_deals_member(message.bot, message.from_user.id):
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🎁 انضم لقناة العروض", url=config.DEALS_CHANNEL_URL)],
-            [InlineKeyboardButton(
-                text="انضميت ✅",
-                callback_data=("join:check:" + ref_code)[:64] if ref_code else "join:check",
-            )],
-        ])
-        await message.answer(texts.JOIN_REQUIRED, reply_markup=kb)
+        await message.answer(texts.JOIN_REQUIRED, reply_markup=_join_kb(ref_code))
         return
     text = await _start_flow(message.bot, message.from_user, ref_code)
     await message.answer(text, reply_markup=MAIN_KB)

@@ -110,3 +110,61 @@ async def _gate_cases():
 
 
 check("force-join gate matrix", asyncio.run(_gate_cases()))
+
+
+from unittest.mock import AsyncMock, MagicMock
+from aiogram.types import Message as TgMessage, CallbackQuery as TgCallback
+
+
+async def _middleware_cases():
+    mw = h.ForceJoinMiddleware()
+
+    async def handler(event, data):
+        return "handled"
+
+    # 1. member + menu message -> handler runs
+    msg = MagicMock(spec=TgMessage)
+    msg.text = "💰 رصيدي"
+    msg.answer = AsyncMock()
+    data = {"event_from_user": SimpleNamespace(id=101), "bot": FakeBot("member")}
+    ok = await mw(handler, msg, data) == "handled"
+
+    # 2. non-member + /start -> passes through to the start handler's own gate
+    msg2 = MagicMock(spec=TgMessage)
+    msg2.text = "/start ref_abc"
+    data2 = {"event_from_user": SimpleNamespace(id=102), "bot": FakeBot("left")}
+    ok &= await mw(handler, msg2, data2) == "handled"
+
+    # 3. non-member + menu message -> gated, handler NOT run, prompt sent
+    msg3 = MagicMock(spec=TgMessage)
+    msg3.text = "💰 رصيدي"
+    msg3.answer = AsyncMock()
+    data3 = {"event_from_user": SimpleNamespace(id=103), "bot": FakeBot("left")}
+    ok &= await mw(handler, msg3, data3) is None
+    ok &= msg3.answer.await_count == 1
+
+    # 4. non-member + join:check callback -> passes through
+    cb = MagicMock(spec=TgCallback)
+    cb.data = "join:check"
+    data4 = {"event_from_user": SimpleNamespace(id=104), "bot": FakeBot("left")}
+    ok &= await mw(handler, cb, data4) == "handled"
+
+    # 5. non-member + other callback -> gated, alert + prompt, handler NOT run
+    cb2 = MagicMock(spec=TgCallback)
+    cb2.data = "mine:start"
+    cb2.answer = AsyncMock()
+    cb2.message = MagicMock(spec=TgMessage)
+    cb2.message.answer = AsyncMock()
+    data5 = {"event_from_user": SimpleNamespace(id=105), "bot": FakeBot("left")}
+    ok &= await mw(handler, cb2, data5) is None
+    ok &= cb2.answer.await_count == 1
+
+    # 6. ambiguous error fails open
+    msg6 = MagicMock(spec=TgMessage)
+    msg6.text = "💰 رصيدي"
+    data6 = {"event_from_user": SimpleNamespace(id=106), "bot": FakeBot(Exception("gateway timeout"))}
+    ok &= await mw(handler, msg6, data6) == "handled"
+    return ok
+
+
+check("middleware gate matrix", asyncio.run(_middleware_cases()))
