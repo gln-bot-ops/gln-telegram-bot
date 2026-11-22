@@ -81,16 +81,21 @@ def _start_health_server():
             # texts go out as the photo (bare) plus normal text chunks. Any
             # photo failure falls back to plain text so no deal is lost.
             ok, err, photo_sent = True, "", False
+            sent_ids = []
             if photo_url:
                 fields = {"chat_id": chat_id, "photo": photo_url}
                 if len(text) <= 1024:
                     fields["caption"] = text
                 try:
-                    photo_sent = bool(tg_call("sendPhoto", fields).get("ok"))
+                    res = tg_call("sendPhoto", fields)
+                    photo_sent = bool(res.get("ok"))
+                    if photo_sent:
+                        sent_ids.append(res["result"]["message_id"])
                 except Exception as exc:
                     log.warning("deals photo post failed, falling back to text: %s", exc)
             if photo_sent and len(text) <= 1024:
-                reply(200, {"ok": True, "error": "", "photo_sent": True})
+                reply(200, {"ok": True, "error": "", "photo_sent": True,
+                            "message_ids": sent_ids})
                 return
             # Telegram caps messages at 4096 chars; send long texts in chunks.
             for i in range(0, len(text), 4000):
@@ -98,11 +103,14 @@ def _start_health_server():
                 try:
                     result = tg_call("sendMessage", {"chat_id": chat_id, "text": chunk})
                     ok = ok and bool(result.get("ok"))
+                    if result.get("ok"):
+                        sent_ids.append(result["result"]["message_id"])
                 except Exception as exc:
                     ok, err = False, str(exc)
                     log.warning("deals post failed: %s", exc)
                     break
-            reply(200 if ok else 502, {"ok": ok, "error": err, "photo_sent": photo_sent})
+            reply(200 if ok else 502, {"ok": ok, "error": err, "photo_sent": photo_sent,
+                                       "message_ids": sent_ids})
 
         def log_message(self, *args):
             pass
