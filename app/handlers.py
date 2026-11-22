@@ -33,14 +33,22 @@ MAIN_KB = ReplyKeyboardMarkup(
 )
 
 
+# Deals-channel promo: one quiet row under key screens, never blocks play.
+DEALS_BTN = InlineKeyboardButton(
+    text="🎁 عروض ولقط اليومية", url="https://t.me/lokatat_ksa"
+)
+
+
 def _mine_kb(session, now: float):
     if not session:
         return InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="⛏️ ابدأ التعدين", callback_data="mine:start")]
+            [InlineKeyboardButton(text="⛏️ ابدأ التعدين", callback_data="mine:start")],
+            [DEALS_BTN],
         ])
     if now >= session["ready_at"]:
         return InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💰 اسحب النقاط", callback_data="mine:claim")]
+            [InlineKeyboardButton(text="💰 اسحب النقاط", callback_data="mine:claim")],
+            [DEALS_BTN],
         ])
     return None
 
@@ -155,6 +163,7 @@ def _upgrades_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="⛏️ رقّي المعدّة", callback_data="up:rig")],
         [InlineKeyboardButton(text="⏱️ رقّي السرعة", callback_data="up:cooldown")],
+        [DEALS_BTN],
     ])
 
 
