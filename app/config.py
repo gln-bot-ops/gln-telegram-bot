@@ -18,3 +18,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "")
 
 # SQLite database file location, used when DATABASE_URL is not set.
 DB_PATH = os.getenv("GLN_DB_PATH", os.path.join(os.path.dirname(__file__), "..", "gln_bot.db"))
+
+# Deals channel the bot promotes and (for /start) requires membership of.
+DEALS_CHAT_ID = int(os.getenv("GLN_DEALS_CHAT_ID", "-1004439463223"))
+DEALS_CHANNEL_URL = os.getenv("GLN_DEALS_CHANNEL_URL", "https://t.me/lokatat_ksa")

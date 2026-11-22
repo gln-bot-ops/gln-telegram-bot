@@ -79,3 +79,34 @@ if failures:
     print("FAILURES:", failures)
     sys.exit(1)
 print(f"All tests passed ({game.session_amount(1)} base rate, cooldown {game.cooldown_sec(1)}s).")
+
+# --- Force-join membership gate (fake bot, no Telegram) ----------------------
+import asyncio
+from types import SimpleNamespace
+from app import handlers as h
+
+
+class FakeBot:
+    def __init__(self, behavior):
+        self.behavior = behavior
+
+    async def get_chat_member(self, chat_id, user_id):
+        b = self.behavior
+        if isinstance(b, Exception):
+            raise b
+        return SimpleNamespace(status=b, is_member=(b != "left"))
+
+
+async def _gate_cases():
+    ok = True
+    ok &= await h._is_deals_member(FakeBot("member"), 1)
+    ok &= await h._is_deals_member(FakeBot("administrator"), 2)
+    ok &= not await h._is_deals_member(FakeBot("left"), 3)
+    ok &= not await h._is_deals_member(FakeBot("kicked"), 4)
+    ok &= not await h._is_deals_member(FakeBot(Exception("Bad Request: member not found")), 5)
+    ok &= await h._is_deals_member(FakeBot(Exception("network timeout")), 6)  # fail open
+    ok &= await h._is_deals_member(FakeBot("restricted"), 7)  # restricted but in chat
+    return ok
+
+
+check("force-join gate matrix", asyncio.run(_gate_cases()))

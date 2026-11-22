@@ -1,4 +1,5 @@
 """User-facing handlers: start/referrals, mining, upgrades, leaderboard."""
+import logging
 import time
 
 from aiogram import F, Router
@@ -7,7 +8,7 @@ from aiogram.types import (CallbackQuery, InlineKeyboardButton,
                            InlineKeyboardMarkup, KeyboardButton, Message,
                            ReplyKeyboardMarkup)
 
-from . import db, game, texts
+from . import config, db, game, texts
 
 router = Router()
 
@@ -35,8 +36,32 @@ MAIN_KB = ReplyKeyboardMarkup(
 
 # Deals-channel promo: one quiet row under key screens, never blocks play.
 DEALS_BTN = InlineKeyboardButton(
-    text="🎁 عروض ولقط اليومية", url="https://t.me/lokatat_ksa"
+    text="🎁 عروض ولقط اليومية", url=config.DEALS_CHANNEL_URL
 )
+
+JOIN_KB = InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(text="🎁 انضم لقناة العروض", url=config.DEALS_CHANNEL_URL)],
+    [InlineKeyboardButton(text="انضميت ✅", callback_data="join:check")],
+])
+
+
+async def _is_deals_member(bot, user_id: int) -> bool:
+    """Force-join check for /start. Fail open on anything ambiguous so no
+    player is ever locked out wrongly; only a definitive non-member is gated.
+    Telegram raises "member not found" (or "user not found") for users who
+    never joined the channel - that case IS a definitive non-member."""
+    log = logging.getLogger(__name__)
+    try:
+        member = await bot.get_chat_member(config.DEALS_CHAT_ID, user_id)
+    except Exception as exc:
+        if "not found" in str(exc).lower():
+            return False
+        log.warning("deals membership check failed open for %s: %s", user_id, exc)
+        return True
+    status = getattr(member, "status", "")
+    if status == "restricted":
+        return bool(getattr(member, "is_member", True))
+    return status not in ("left", "kicked")
 
 
 def _mine_kb(session, now: float):
@@ -75,19 +100,46 @@ async def _notify_inviter(bot, inviter_id: int, text: str):
         pass  # inviter blocked the bot; nothing to do
 
 
+async def _start_flow(bot, tg_user, ref_code):
+    """The normal /start path once channel membership is confirmed."""
+    user, created, inviter = db.register_user(
+        tg_user.id, tg_user.username, tg_user.first_name, ref_code
+    )
+    text = texts.WELCOME.format(points=user["points"], ref_code=user["ref_code"])
+    if created and inviter:
+        text += texts.WELCOME_REFERRED
+        await _notify_inviter(bot, inviter, texts.INVITER_NOTIFY_JOIN.format(bonus=game.REF_JOIN_BONUS))
+    return text
+
+
 @router.message(CommandStart())
 async def on_start(message: Message, command: CommandObject):
     ref_code = None
     if command.args and command.args.startswith("ref_"):
         ref_code = command.args[4:]
-    user, created, inviter = db.register_user(
-        message.from_user.id, message.from_user.username, message.from_user.first_name, ref_code
-    )
-    text = texts.WELCOME.format(points=user["points"], ref_code=user["ref_code"])
-    if created and inviter:
-        text += texts.WELCOME_REFERRED
-        await _notify_inviter(message.bot, inviter, texts.INVITER_NOTIFY_JOIN.format(bonus=game.REF_JOIN_BONUS))
+    if not await _is_deals_member(message.bot, message.from_user.id):
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🎁 انضم لقناة العروض", url=config.DEALS_CHANNEL_URL)],
+            [InlineKeyboardButton(
+                text="انضميت ✅",
+                callback_data=("join:check:" + ref_code)[:64] if ref_code else "join:check",
+            )],
+        ])
+        await message.answer(texts.JOIN_REQUIRED, reply_markup=kb)
+        return
+    text = await _start_flow(message.bot, message.from_user, ref_code)
     await message.answer(text, reply_markup=MAIN_KB)
+
+
+@router.callback_query(F.data.startswith("join:check"))
+async def on_join_check(cb: CallbackQuery):
+    if not await _is_deals_member(cb.bot, cb.from_user.id):
+        await cb.answer(texts.JOIN_STILL_NOT_MEMBER, show_alert=True)
+        return
+    ref_code = cb.data.partition("join:check:")[2] or None
+    await cb.answer(texts.JOIN_CONFIRMED)
+    text = await _start_flow(cb.bot, cb.from_user, ref_code)
+    await cb.message.answer(text, reply_markup=MAIN_KB)
 
 
 @router.message(F.text == "⛏️ التعدين")
